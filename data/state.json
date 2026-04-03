@@ -1,49 +1,6 @@
 {
-  "lastCheck": "2026-04-03T11:28:13.177Z",
-  "knownTopics": [
-    {
-      "id": "release-v1.0.17",
-      "title": "Copilot CLI v1.0.17",
-      "source": "releases",
-      "date": "2026-04-03"
-    },
-    {
-      "id": "release-v1.0.16",
-      "title": "Copilot CLI v1.0.16",
-      "source": "releases",
-      "date": "2026-04-02"
-    },
-    {
-      "id": "release-v1.0.15",
-      "title": "Copilot CLI v1.0.15",
-      "source": "releases",
-      "date": "2026-04-01"
-    },
-    {
-      "id": "release-v1.0.14",
-      "title": "Copilot CLI v1.0.14",
-      "source": "releases",
-      "date": "2026-03-31"
-    },
-    {
-      "id": "blog-run-multiple-agents-at-once-with-fleet-in-copilot-cli",
-      "title": "Run multiple agents at once with /fleet",
-      "source": "blog",
-      "date": "2026-04-01"
-    },
-    {
-      "id": "blog-agent-driven-development-in-copilot-applied-science",
-      "title": "Agent-driven development in Copilot Applied Science",
-      "source": "blog",
-      "date": "2026-03-31"
-    },
-    {
-      "id": "blog-building-ai-powered-github-issue-triage-with-the-copilot-sdk",
-      "title": "AI-powered issue triage with Copilot SDK",
-      "source": "blog",
-      "date": "2026-03-24"
-    }
-  ],
+  "lastCheck": null,
+  "knownTopics": [],
   "excludedKeywords": [],
   "preferences": {
     "lookbackDays": 14,

@@ -25,11 +25,14 @@ the report, and collect feedback that refines future runs.
 | Extension scope        | **Project-level** — `.github/extensions/copilot-news/`      |
 | Runtime                | Node.js ES Module (`.mjs`) using `@github/copilot-sdk`      |
 | Output language        | **English**                                                  |
-| Output format          | Markdown report (saved) + terminal summary + `ask_user` feedback |
-| Trigger mechanism      | `onUserPromptSubmitted` keyword hook                        |
+| Output format          | Markdown report (saved) + terminal summary                  |
+| Trigger mechanism      | **`/agent` invocation** — user selects "Copilot News" agent |
+| Feedback loop          | **None** — user may ask the agent to update preferences inline |
 | Changelog integration  | No (skip built-in `/changelog`)                             |
 | Report history         | Yes — timestamped files in `reports/`                       |
 | Try-it-out suggestions | Yes — every notable item gets an actionable suggestion      |
+| Docs linking           | Yes — each feature links to the relevant docs URL           |
+| Release note filtering | Features only — bug fixes and performance items pre-filtered |
 | State persistence      | JSON file in `data/state.json`                              |
 
 ---
@@ -39,9 +42,11 @@ the report, and collect feedback that refines future runs.
 ```
 github-copilot-cli-explorer/
 ├── .github/
-│   └── extensions/
-│       └── copilot-news/
-│           └── extension.mjs          ← Single-file extension (entry point)
+│   ├── extensions/
+│   │   └── copilot-news/
+│   │       └── extension.mjs          ← Single-file extension (entry point)
+│   └── skills/
+│       └── copilot-news.md            ← Skill: docs URL map for feature linking
 ├── data/
 │   └── state.json                     ← Persisted agent state
 ├── reports/
@@ -52,6 +57,7 @@ github-copilot-cli-explorer/
 ```
 
 - `extension.mjs` — MUST be named exactly this. Only `.mjs` is supported.
+- `copilot-news.md` — Skill file in `skillDirectories`; loaded as context for the agent.
 - `data/` and `reports/` are created automatically by tools if they don't exist.
 
 ---
@@ -61,38 +67,31 @@ github-copilot-cli-explorer/
 ### 3.1 High-Level Flow
 
 ```
-User types: "copilot news"
-        │
-        ▼
+User runs: /agent → selects "Copilot News"
+         │
+         ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│  onUserPromptSubmitted Hook                                          │
-│  1. Test prompt against TRIGGER_PATTERNS                             │
-│  2. If match → log "📰 Copilot News Agent activated" (info)         │
-│  3. Return { additionalContext: WORKFLOW_INSTRUCTIONS }              │
-│  4. If no match → return undefined (no-op)                          │
+│  joinSession registers:                                               │
+│  - customAgents: [{ name: "copilot-news", prompt: AGENT_PROMPT, ...}]│
+│  - skillDirectories: [".github/skills"]                              │
+│  - tools: [6 tool handlers]                                          │
 └───────────────────────────────────────────────────────────────────────┘
-        │
-        ▼
+         │
+         ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│  LLM Agent (Copilot CLI) — guided by injected instructions          │
+│  Copilot News Agent — guided by AGENT_PROMPT + skill context         │
 │                                                                       │
 │  Step 1: Call copilot_news_load_state                                │
-│  Step 2: Call all 4 fetchers IN PARALLEL:                            │
-│          copilot_news_fetch_releases                                  │
+│  Step 2: Call all 3 fetchers IN PARALLEL:                            │
+│          copilot_news_fetch_releases (features only, pre-filtered)   │
 │          copilot_news_fetch_blog                                      │
 │          copilot_news_fetch_reddit                                    │
-│          copilot_news_fetch_docs                                      │
-│  Step 3: Analyze — compare against knownTopics (by ID), filter       │
-│          excludedKeywords (case-insensitive substring match)          │
+│  Step 3: Filter against knownTopics and excludedKeywords             │
 │  Step 4: For each new item → generate "Try it out" suggestion        │
+│          and add docs link from skill reference                      │
 │  Step 5: Call copilot_news_save_report with markdown report          │
 │  Step 6: Call copilot_news_save_state (lastCheck + all topic IDs)    │
-│  Step 7: Call copilot_news_request_feedback → ask in text response   │
-│                                                                       │
-│  [User replies with feedback → new turn]                              │
-│                                                                       │
-│  Step 8: Hook injects FEEDBACK_INSTRUCTIONS                          │
-│  Step 9: Call copilot_news_update_preferences (keywords + focus)     │
+│  Step 7: Present scannable terminal summary                          │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -109,63 +108,47 @@ import { join } from "node:path";
 ### 3.3 Constants and State
 
 ```js
-const CWD        = process.cwd();                    // Repo root
-const STATE_PATH = join(CWD, "data", "state.json");  // State file
+const CWD         = process.cwd();                    // Repo root
+const STATE_PATH  = join(CWD, "data", "state.json");  // State file
 const REPORTS_DIR = join(CWD, "reports");             // Report directory
-
-let awaitingFeedback = false;  // Two-turn feedback flag (in-memory)
+const SKILLS_DIR  = join(CWD, ".github", "skills");   // Skill files
 ```
+
+### 3.4 joinSession Configuration
+
+```js
+const session = await joinSession({
+    skillDirectories: [SKILLS_DIR],
+    customAgents: [
+        {
+            name:        "copilot-news",
+            displayName: "Copilot News",
+            description: "Research and summarize recent GitHub Copilot CLI developments",
+            tools:       TOOLS.map((t) => t.name),
+            prompt:      AGENT_PROMPT,
+        },
+    ],
+    tools: TOOLS,
+});
+```
+
+- `skillDirectories` loads `.github/skills/copilot-news.md` as persistent context.
+- `customAgents.tools` restricts the agent to only the 6 news tools.
+- `customAgents.prompt` is the agent's system prompt (replaces WORKFLOW_INSTRUCTIONS).
 
 ---
 
-## 4. Trigger Hook
+## 4. Agent Invocation
 
-### 4.1 Keyword Patterns
+The extension registers a **named custom agent** instead of a keyword hook. The user
+invokes it explicitly:
 
-The hook fires on `onUserPromptSubmitted`. The prompt is tested against an ordered
-list of regex patterns. If **any** matches, the hook activates.
+1. Start Copilot CLI from the repo root: `cd github-copilot-cli-explorer && copilot`
+2. Type `/agent` and select **Copilot News** from the list.
+3. Send any message to start the workflow (e.g. "fetch recent Copilot news").
 
-```js
-const TRIGGER_PATTERNS = [
-    /\bcopilot\s*news\b/i,
-    /\bwhat'?s\s+new\b.*\bcopilot\b/i,
-    /\bcopilot\b.*\bwhat'?s\s+new\b/i,
-    /\bcheck\s+(copilot\s+)?updates?\b/i,
-    /\bcopilot\s+updates?\b/i,
-    /\bnews\s+check\b/i,
-];
-```
-
-**Matching examples** (all case-insensitive):
-- `"copilot news"` ✅
-- `"Copilot News please"` ✅
-- `"what's new in copilot"` ✅
-- `"check copilot updates"` ✅
-- `"copilot updates"` ✅
-- `"news check"` ✅
-
-**Non-matching examples**:
-- `"tell me about copilot"` ❌
-- `"update my dependencies"` ❌
-- `"news about JavaScript"` ❌
-
-### 4.2 Hook Behavior
-
-```js
-hooks: {
-    onUserPromptSubmitted: async (input) => {
-        const triggered = TRIGGER_PATTERNS.some((p) => p.test(input.prompt));
-        if (!triggered) return;   // no-op — don't modify anything
-
-        await session.log("📰 Copilot News Agent activated — fetching latest updates…");
-        return { additionalContext: WORKFLOW_INSTRUCTIONS };
-    },
-}
-```
-
-- **`additionalContext`** is invisible to the user but visible to the LLM.
-- The original prompt is NOT modified (`modifiedPrompt` is not returned).
-- `session.log` uses default level `"info"`.
+There is no keyword hook (`onUserPromptSubmitted` is not used). The agent is entirely
+opt-in via `/agent`.
 
 ---
 
@@ -357,57 +340,14 @@ handler: async () => {
 
 ---
 
-### 6.3 `copilot_news_request_feedback`
+### 6.3 `copilot_news_fetch_releases`
 
-**Purpose**: Arm the two-turn feedback loop. Must be called after `copilot_news_save_state`
-and before ending the news-check response.
-
-| Property | Value |
-|----------|-------|
-| Name | `copilot_news_request_feedback` |
-| Description | "Call this after presenting the news summary. Arms the system to capture the user's next reply as feedback. MUST be called before ending the response." |
-| Parameters | `{ type: "object", properties: {} }` (no arguments) |
-| Side effect | Sets in-memory `awaitingFeedback = true` |
-| Returns | Confirmation string |
-
----
-
-### 6.4 `copilot_news_update_preferences`
-
-**Purpose**: Persist the user's feedback (excluded keywords, focus areas) after their reply.
-
-| Property | Value |
-|----------|-------|
-| Name | `copilot_news_update_preferences` |
-| Description | "Persist user feedback: add excluded keywords and/or update focus areas." |
-
-**Parameters**:
-```json
-{
-    "type": "object",
-    "properties": {
-        "excludedKeywords": { "type": "array", "items": { "type": "string" } },
-        "focusAreas":       { "type": "array", "items": { "type": "string" } }
-    }
-}
-```
-
-**Handler behavior**:
-1. Load current state.
-2. Merge new `excludedKeywords` with existing (deduplicate via `Set`).
-3. Replace `preferences.focusAreas` with provided value (or keep current if not provided).
-4. Save. Return confirmation: `"Preferences saved — excluded: X | focus: Y"`.
-
----
-
-### 6.5 `copilot_news_fetch_releases`
-
-**Purpose**: Fetch recent Copilot CLI releases from the GitHub API.
+**Purpose**: Fetch recent Copilot CLI releases, pre-filtered to new features only.
 
 | Property      | Value                                                                 |
 |---------------|-----------------------------------------------------------------------|
 | Name          | `copilot_news_fetch_releases`                                         |
-| Description   | "Fetch recent GitHub Copilot CLI releases from the GitHub API. Returns structured release data including version, date, and release notes." |
+| Description   | "Fetch recent GitHub Copilot CLI releases. Returns only new features — bug fixes and performance improvements are pre-filtered." |
 
 **Parameters schema**:
 ```json
@@ -436,20 +376,23 @@ for unauthenticated requests (sufficient for periodic use).
 **Response processing**:
 1. Parse JSON array of release objects.
 2. Compute cutoff date = `now - state.preferences.lookbackDays` days.
-3. Filter: only releases where `published_at >= cutoff`.
-4. Map each release to:
+3. Filter: only releases where `published_at >= cutoff` and `prerelease === false`.
+4. Apply `filterFeaturesOnly(body)` to each release's `body`:
+   - Drop lines matching bug-fix patterns: `/^(Fix|Resolve|Correct|Patch|Revert)\b/i`,
+     `/\bno longer\b/i`, `/\bnow correctly\b/i`.
+   - Drop lines matching perf patterns: `/\b(loads?\s+\w+\s+faster|significantly faster|performance improvement|optimiz)\b/i`.
+5. Map each release to:
    ```json
    {
-       "id":         "release-{tag_name}",
-       "version":    "{tag_name}",
-       "name":       "{name}",
-       "date":       "{published_at}",
-       "url":        "{html_url}",
-       "body":       "{body truncated to 3000 chars}",
-       "prerelease": true|false
+       "id":      "release-{tag_name}",
+       "version": "{tag_name}",
+       "name":    "{name}",
+       "date":    "{published_at}",
+       "url":     "{html_url}",
+       "body":    "{filtered body truncated to 4000 chars}"
    }
    ```
-5. Return JSON envelope:
+6. Return JSON envelope:
    ```json
    { "source": "releases", "count": N, "items": [...] }
    ```
@@ -470,7 +413,7 @@ for unauthenticated requests (sufficient for periodic use).
 
 ---
 
-### 6.6 `copilot_news_fetch_blog`
+### 6.4 `copilot_news_fetch_blog`
 
 **Purpose**: Fetch recent GitHub Copilot blog posts.
 
@@ -570,7 +513,7 @@ const id = `blog-${slug}`;
 
 ---
 
-### 6.7 `copilot_news_fetch_reddit`
+### 6.5 `copilot_news_fetch_reddit`
 
 **Purpose**: Fetch recent posts from r/GithubCopilot.
 
@@ -658,63 +601,30 @@ Reddit REQUIRES a non-empty `User-Agent`. Without it, the request is blocked (42
 
 ---
 
-### 6.8 `copilot_news_fetch_docs`
+### 6.6 Docs Linking (via Skill)
 
-**Purpose**: Fetch the GitHub Copilot documentation to detect new/updated content.
+Instead of fetching docs at runtime, the agent uses a **skill file** to map features
+to documentation URLs. The skill file (`.github/skills/copilot-news.md`) is loaded
+as persistent context via `skillDirectories`.
 
-| Property      | Value                                                                 |
-|---------------|-----------------------------------------------------------------------|
-| Name          | `copilot_news_fetch_docs`                                             |
-| Description   | "Fetch the GitHub Copilot documentation page to check for recent updates and new content." |
+**Skill contents** — a reference table of topic areas to docs URLs:
 
-**Parameters schema**:
-```json
-{
-    "type": "object",
-    "properties": {
-        "section": {
-            "type": "string",
-            "description": "Which docs section to check: 'main' for the overview, 'whats-new' for what's new (default: 'main')",
-            "enum": ["main", "whats-new"]
-        }
-    }
-}
-```
+| Topic area | Docs URL |
+|------------|---------|
+| CLI overview | https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli |
+| CLI how-to | https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli |
+| MCP | https://docs.github.com/en/copilot/how-tos/context/model-context-protocol/using-mcp-tools-in-github-copilot-cli |
+| Models | https://docs.github.com/en/copilot/using-github-copilot/ai-models-for-github-copilot |
+| Agents | https://docs.github.com/en/copilot/concepts/agents/about-github-copilot-agents |
+| What's new | https://docs.github.com/en/copilot/about-github-copilot/whats-new-in-github-copilot |
+| General | https://docs.github.com/en/copilot |
 
-**URL mapping**:
-```js
-{
-    "main":       "https://docs.github.com/en/copilot",
-    "whats-new":  "https://docs.github.com/en/copilot/about-github-copilot/whats-new-in-github-copilot"
-}
-```
-
-**Processing**:
-1. Fetch the HTML page.
-2. Extract `<main>` content: `/<main[^>]*>([\s\S]*?)<\/main>/i`.
-3. Strip `<script>` and `<style>` blocks.
-4. Strip all remaining HTML tags.
-5. Compress whitespace.
-6. Truncate to **5000 characters**.
-
-**Return schema**:
-```json
-{
-    "source":  "docs",
-    "section": "main" | "whats-new",
-    "url":     "https://docs.github.com/en/copilot",
-    "content": "Plain text content (≤ 5000 chars)"
-}
-```
-
-**Note**: The docs source is **unstructured** — it returns raw text. The LLM is
-responsible for interpreting the content and identifying what's new based on
-comparison with previously seen content. The docs tool is less structured than
-the other sources but provides useful context the LLM can analyze.
+**Agent prompt rule**: "For each feature, add a docs link using the copilot-news skill.
+Format: `📖 [Docs](url)`."
 
 ---
 
-### 6.9 `copilot_news_save_report`
+### 6.7 `copilot_news_save_report`
 
 **Purpose**: Save a markdown news report to the `reports/` directory.
 
@@ -757,14 +667,12 @@ the other sources but provides useful context the LLM can analyze.
 
 ## 7. Report Format
 
-The LLM generates this markdown. The format is specified in the injected
-WORKFLOW_INSTRUCTIONS so the LLM follows it consistently.
+The LLM generates this markdown. The format is specified in `AGENT_PROMPT`.
 
 ```markdown
 # Copilot CLI News — {YYYY-MM-DD}
 
-> Last check: {previous lastCheck or "first run"}
-> Sources: GitHub Releases, GitHub Blog, Reddit r/GithubCopilot, GitHub Docs
+> Sources: GitHub Releases · GitHub Blog · Reddit
 > Lookback: {N} days
 
 ---
@@ -772,43 +680,35 @@ WORKFLOW_INSTRUCTIONS so the LLM follows it consistently.
 ## 🆕 New Features
 
 ### {Feature Name} (source: releases {version})
-{1-3 sentence summary}
+{1–2 sentence summary}
 
-**Try it out:**
-```
-{exact CLI command or steps}
-```
+**Try it out:** `{exact CLI command or steps}`
+📖 [Docs]({relevant docs URL})
 
 ### {Feature Name} (source: blog)
 {Summary}
-**Link:** {url}
 
-**Try it out:**
-{Steps to try this feature}
-
----
-
-## 🐛 Bug Fixes
-
-### {Fix description} (source: releases {version})
-{Brief description of what was fixed}
+**Read:** {url}
+📖 [Docs]({relevant docs URL})
 
 ---
 
-## 📖 Documentation Updates
+## ✍️ Blog Posts
 
-### {What changed} (source: docs)
-{Summary of documentation changes}
+### {Post Title}
+{Summary}
+
+**Read:** {url}
+📖 [Docs]({relevant docs URL})
 
 ---
 
 ## 💬 Community Highlights
 
-### {Post Title} (source: reddit, score: {N}, comments: {M})
+### {Post Title} (score: {N})
 {Summary of the discussion}
-**Link:** {url}
 
-**Try it out:** {if applicable — concrete suggestion}
+**Discussion:** {url}
 
 ---
 
@@ -825,71 +725,54 @@ The following keywords were filtered out: {comma-separated list or "none"}
 - Known items skipped: {N}
 ```
 
-**Sections with no items** should still appear with a note like
-"No new items in this category."
+**Sections with no items** should appear with a note: "No new items in this category."
 
 ---
 
-## 8. Workflow Instructions (Injected Context)
+## 8. Agent Prompt (AGENT_PROMPT)
 
-This exact string is injected as `additionalContext` when the hook triggers.
-It instructs the LLM on the complete workflow.
+This string is the `prompt` field of the `CustomAgentConfig`. It is the agent's
+system prompt and replaces the old `WORKFLOW_INSTRUCTIONS`.
 
 ```
-You have been triggered as the **Copilot News Agent**. Follow this workflow precisely:
+You are the **Copilot News Agent** — a specialist for tracking GitHub Copilot CLI
+developments.
 
-## Step 1 — Load State
-Call `copilot_news_load_state` to retrieve the user's known topics, excluded keywords,
-and preferences.
+## When the user starts a conversation or asks for news:
 
-## Step 2 — Fetch Sources (in parallel)
-Call ALL of these tools simultaneously:
+### Step 1 — Load state
+Call `copilot_news_load_state`.
+
+### Step 2 — Fetch sources (call ALL THREE in parallel)
 - `copilot_news_fetch_releases`
 - `copilot_news_fetch_blog`
 - `copilot_news_fetch_reddit`
-- `copilot_news_fetch_docs`
 
-## Step 3 — Analyze & Filter
-- Compare fetched items against `knownTopics` (by ID) — skip items the user already knows.
-- Filter out items matching any `excludedKeywords` (case-insensitive substring match
-  against title, body, or excerpt).
-- Group remaining items by category: **New Features**, **Bug Fixes**, **Documentation**,
-  **Community Highlights**.
-- Rank by importance/impact.
+### Step 3 — Filter
+- Skip items whose ID appears in `knownTopics`.
+- Skip items whose title/body matches any string in `excludedKeywords`.
+- Only include new features and capabilities. Bug fixes and performance improvements
+  are already filtered at the source — do not re-introduce them.
 
-## Step 4 — Generate Try-It-Out Suggestions
-For each new feature or notable item, include a concrete **"Try it out"** suggestion:
-- Exact CLI commands to run
-- Example prompts to type
-- Settings to change
-- Links to relevant docs
-Make these actionable — the user should be able to copy-paste and try immediately.
+### Step 4 — Add docs links
+For every feature, add a relevant GitHub Copilot docs link using the knowledge
+from the copilot-news skill. Format: `📖 [Docs](url)`.
 
-## Step 5 — Save Report
-Call `copilot_news_save_report` with the full markdown report. Use the report format
-described in the specification: sections for New Features, Bug Fixes, Documentation,
-Community Highlights, Excluded by Preference, and Statistics.
+### Step 5 — Save report
+Call `copilot_news_save_report` with the full markdown (see report format in §7).
 
-## Step 6 — Present Summary
-Show a concise terminal-friendly summary of the key findings. Keep it scannable.
-Use bullet points. Highlight the most impactful items.
+### Step 6 — Save state
+Call `copilot_news_save_state` with `lastCheck` = now and all topic IDs from this
+report merged into `knownTopics` (do NOT replace — append new IDs only).
 
-## Step 7 — Collect Feedback
-Use the `ask_user` tool to ask the user:
-- Which topics they want to **mark as known** (so they won't appear next time)
-- Which topics they want to **exclude permanently** (keywords to add to exclusion list)
-- Any topics they want to learn **more** about (you'll provide deeper analysis)
-- Any **focus areas** to prioritize next time
+### Step 7 — Present summary
+Give a short, scannable terminal summary.
 
-## Step 8 — Save State
-Based on user feedback, call `copilot_news_save_state` with the updated state:
-- Add ALL topic IDs that appeared in this report to `knownTopics`
-  (merge with existing, don't replace)
-- Add any new excluded keywords from user feedback
-- Update `lastCheck` to the current ISO 8601 timestamp
-- Update `focusAreas` if the user specified any
-
-IMPORTANT: Complete ALL steps. Do not skip the feedback loop or state saving.
+## Rules
+- Never invent features — only report what you found in the fetched data.
+- Always complete all steps, even if some sources return no results.
+- If the user asks to exclude certain topics, call `copilot_news_save_state` with
+  updated `excludedKeywords`.
 ```
 
 ---
@@ -927,7 +810,6 @@ sources failed.
 | GitHub  | 60 req/hr (unauth)   | Only fetches 1 page per run             |
 | Reddit  | ~100 req/10min       | Single request per run                  |
 | Blog    | No known limit       | Single request per run                  |
-| Docs    | No known limit       | Single request per run                  |
 
 If the extension is used as designed (every few days), rate limits are not a concern.
 
@@ -939,11 +821,12 @@ If the extension is used as designed (every few days), rate limits are not a con
 
 ```js
 const session = await joinSession({
-    hooks: { ... },
-    tools: [ ... ],
+    skillDirectories: [SKILLS_DIR],
+    customAgents: [{ name: "copilot-news", ... }],
+    tools: TOOLS,
 });
 
-await session.log("📰 Copilot News extension loaded — type 'copilot news' to check for updates");
+await session.log("📰 Copilot News Agent ready — run /agent to select 'Copilot News'");
 ```
 
 The startup log message confirms the extension loaded successfully.
@@ -964,78 +847,18 @@ explicitly via the `save_state` tool, not on shutdown).
 
 ---
 
-## 11. User Feedback Loop
+## 11. Preference Updates
 
-### 11.1 Design
+There is no separate feedback loop or dedicated feedback tools. Preferences are
+updated inline during any conversation:
 
-The feedback loop uses a **two-turn pattern** rather than the `ask_user` built-in
-tool, which the LLM tends to skip after completing a multi-step workflow.
+- User says "exclude anything about streamer-mode" → agent calls `copilot_news_save_state`
+  with the new keyword added to `excludedKeywords`.
+- User says "focus on MCP and extensions next time" → agent calls `copilot_news_save_state`
+  with updated `preferences.focusAreas`.
 
-**Turn 1 (news check turn)**:
-1. Agent completes Steps 1–6 (fetch, analyze, save report, save state).
-2. Agent calls `copilot_news_request_feedback` → sets `awaitingFeedback = true`.
-3. Agent asks feedback questions in its **text response** and ends the turn.
-
-**Turn 2 (user feedback reply)**:
-1. `onUserPromptSubmitted` detects `awaitingFeedback === true`.
-2. Sets `awaitingFeedback = false` immediately (prevents double-trigger).
-3. Injects `FEEDBACK_INSTRUCTIONS` as `additionalContext`.
-4. Agent parses the user's reply, calls `copilot_news_update_preferences`.
-
-### 11.2 State Saving Order
-
-State is saved in **two separate calls**:
-
-| Call | When | What |
-|------|------|------|
-| `copilot_news_save_state` | Step 6 of news turn | `lastCheck` + all report topic IDs → `knownTopics` |
-| `copilot_news_update_preferences` | Feedback turn | New `excludedKeywords` + `focusAreas` |
-
-Splitting the saves ensures progress is never lost — even if the user doesn't reply.
-
-### 11.3 Feedback Questions (in agent's text)
-
-```
-> **Feedback (reply to any or all):**
-> 1. Topics to **exclude forever** — keywords I should never show again?
-> 2. **Focus areas** to prioritize next time (e.g. "extensions", "mcp", "models")?
-> 3. Anything you want to explore deeper right now?
-```
-
-### 11.4 Tool: `copilot_news_request_feedback`
-
-| Property | Value |
-|----------|-------|
-| Parameters | None |
-| Side effect | Sets in-memory `awaitingFeedback = true` |
-| Returns | Confirmation string for the LLM |
-
-### 11.5 Tool: `copilot_news_update_preferences`
-
-**Parameters**:
-```json
-{
-    "type": "object",
-    "properties": {
-        "excludedKeywords": {
-            "type": "array",
-            "description": "New keywords to add to the permanent exclusion list",
-            "items": { "type": "string" }
-        },
-        "focusAreas": {
-            "type": "array",
-            "description": "Topics to prioritize on the next news check",
-            "items": { "type": "string" }
-        }
-    }
-}
-```
-
-**Behavior**:
-1. Load current state.
-2. Merge new `excludedKeywords` with existing (deduplicate via `Set`).
-3. Replace `preferences.focusAreas` with provided value.
-4. Save. Return confirmation.
+`copilot_news_save_state` handles both use cases (it accepts the full state).
+The agent merges new values with existing state before saving.
 
 ---
 
@@ -1071,22 +894,19 @@ The LLM follows these guidelines when generating try-it-out suggestions:
 After implementation, verify:
 
 - [ ] Extension loads without errors (`extensions_manage list` shows it)
-- [ ] `extensions_manage inspect copilot-news` shows all 9 tools
-- [ ] Typing "copilot news" triggers the hook (log message "📰 Copilot News Agent activated" appears)
+- [ ] `extensions_manage inspect copilot-news` shows all 6 tools
+- [ ] `/agent` command offers "Copilot News" in the selection list
 - [ ] `copilot_news_load_state` returns valid JSON
-- [ ] `copilot_news_fetch_releases` returns release data
+- [ ] `copilot_news_fetch_releases` returns release data with bug fixes pre-filtered
 - [ ] `copilot_news_fetch_blog` returns blog post data (via RSS)
 - [ ] `copilot_news_fetch_reddit` returns Reddit posts
-- [ ] `copilot_news_fetch_docs` returns doc content
 - [ ] `copilot_news_save_report` creates a file in `reports/`
 - [ ] `copilot_news_save_state` persists changes to `data/state.json`
-- [ ] `copilot_news_request_feedback` sets `awaitingFeedback = true`
-- [ ] After feedback is requested, replying to the agent triggers "💬 Processing your feedback…" log
-- [ ] `copilot_news_update_preferences` merges keywords and saves focus areas
-- [ ] Full two-turn workflow completes: trigger → fetch → save → feedback question → reply → update prefs
+- [ ] Each feature in the report has a `📖 [Docs](url)` link
+- [ ] Full workflow completes: load state → fetch (3 sources) → save report → save state → summary
 - [ ] Same-day re-run creates `{date}-2.md` instead of overwriting
-- [ ] Non-trigger prompts don't activate the hook
-- [ ] State survives extension reload (`awaitingFeedback` resets, JSON state persists)
+- [ ] State survives extension reload (JSON state persists in `data/state.json`)
+- [ ] User can update exclusions inline: "exclude X" → agent calls save_state with new keyword
 
 ---
 

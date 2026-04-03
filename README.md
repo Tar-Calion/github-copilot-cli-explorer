@@ -1,8 +1,8 @@
 # GitHub Copilot CLI Explorer
 
 A project for exploring and staying up-to-date with GitHub Copilot CLI.
-Includes the **Copilot News Agent** — a Copilot CLI extension that researches
-recent Copilot developments and delivers a curated, actionable digest.
+Includes the **Copilot News Agent** — a Copilot CLI custom agent (extension) that
+researches recent Copilot developments and delivers a curated, actionable digest.
 
 ---
 
@@ -10,39 +10,46 @@ recent Copilot developments and delivers a curated, actionable digest.
 
 ### What it does
 
-Every time you type **`copilot news`** in Copilot CLI, the agent:
+When you invoke the **Copilot News** agent, it:
 
-1. **Fetches** from four sources in parallel:
-   - GitHub Releases (`github/copilot-cli`)
-   - GitHub Blog (`github.blog/ai-and-ml/github-copilot/`)
-   - GitHub Docs (`docs.github.com/en/copilot`)
+1. **Fetches** from three sources in parallel:
+   - GitHub Releases (`github/copilot-cli`) — **new features only** (bug fixes / perf improvements filtered out)
+   - GitHub Blog (`github.blog/ai-and-ml/github-copilot/`) — via RSS, with HTML fallback
    - Reddit (`r/GithubCopilot`)
 2. **Filters** out topics you've already seen and keywords you've excluded.
-3. **Groups** findings: New Features · Bug Fixes · Documentation · Community.
-4. **Suggests** a concrete "Try it out" action for every item.
+3. **Links** each feature to the relevant GitHub Copilot docs page.
+4. **Suggests** a concrete "Try it out" action for every feature.
 5. **Saves** a timestamped Markdown report to `reports/`.
-6. **Asks** for your feedback — keywords to exclude forever, topics to focus on next time.
-7. **Persists** your preferences in `data/state.json` for the next run.
+6. **Persists** seen topics and preferences in `data/state.json` for the next run.
 
-### Trigger phrases
+### How to invoke
 
-| Phrase | Example |
-|--------|---------|
-| `copilot news` | "copilot news" |
-| `copilot updates` | "any copilot updates?" |
-| `what's new in copilot` | "what's new in copilot?" |
-| `check copilot updates` | "check copilot updates" |
-| `news check` | "news check" |
+Start Copilot CLI from the repo root:
 
-### Feedback loop
+```bash
+cd github-copilot-cli-explorer
+copilot
+```
 
-After the summary is shown, the agent asks:
+The extension loads and you'll see:
 
-> 1. Topics to **exclude forever** — keywords I should never show again?
-> 2. **Focus areas** to prioritize next time (e.g. "extensions", "mcp", "models")?
-> 3. Anything you want to **explore deeper** right now?
+```
+📰 Copilot News Agent ready — run /agent to select 'Copilot News'
+```
 
-Your reply is automatically captured and saved to `data/state.json`.
+Then switch to the agent:
+
+```
+/agent
+```
+
+Select **Copilot News** from the list, then start the conversation:
+
+```
+You: fetch recent Copilot news
+```
+
+The agent fetches the last 14 days of content and generates your first report.
 
 ---
 
@@ -50,53 +57,24 @@ Your reply is automatically captured and saved to `data/state.json`.
 
 ```
 ├── .github/
-│   └── extensions/
-│       └── copilot-news/
-│           └── extension.mjs   ← Copilot CLI extension (9 tools + keyword hook)
+│   ├── extensions/
+│   │   └── copilot-news/
+│   │       └── extension.mjs   ← Copilot CLI custom agent (6 tools)
+│   └── skills/
+│       └── copilot-news.md     ← Skill: docs URL mapping for feature linking
 ├── data/
 │   └── state.json              ← Persisted: known topics, excluded keywords, preferences
 ├── reports/
 │   └── YYYY-MM-DD.md           ← Timestamped news reports (auto-generated)
-├── SPECIFICATION.md            ← Full technical spec (regenerate from scratch)
+├── SPECIFICATION.md            ← Full technical spec
 └── README.md
 ```
 
 ---
 
-## 🚀 Setup
-
-### Prerequisites
-
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) installed and logged in
-- An active GitHub Copilot subscription
-
-### Install
-
-```bash
-git clone https://github.com/Tar-Calion/github-copilot-cli-explorer
-cd github-copilot-cli-explorer
-copilot
-```
-
-The extension loads automatically — you'll see:
-
-```
-📰 Copilot News extension loaded — type 'copilot news' to check for updates
-```
-
-### First run
-
-```
-You: copilot news
-```
-
-The agent fetches the last 14 days of content and generates your first report.
-
----
-
 ## ⚙️ Configuration
 
-Edit `data/state.json` directly, or let the agent update it via the feedback loop.
+Edit `data/state.json` directly, or ask the agent to update it during a conversation.
 
 ```json
 {
@@ -118,20 +96,23 @@ Edit `data/state.json` directly, or let the agent update it via the feedback loo
 | `preferences.lookbackDays` | How far back to look (default: 14) |
 | `preferences.focusAreas` | Priority topics for the next check |
 
+To update exclusions mid-conversation just tell the agent:
+
+```
+Exclude anything related to "streamer-mode" from now on
+```
+
 ---
 
 ## 🛠️ Extension tools
 
 | Tool | Purpose |
 |------|---------|
-| `copilot_news_load_state` | Load persisted state |
+| `copilot_news_load_state` | Load persisted state (known topics, preferences) |
 | `copilot_news_save_state` | Save state after a run |
-| `copilot_news_request_feedback` | Arm the feedback loop for the next user reply |
-| `copilot_news_update_preferences` | Persist excluded keywords / focus areas |
-| `copilot_news_fetch_releases` | GitHub Releases API |
+| `copilot_news_fetch_releases` | GitHub Releases API — new features only |
 | `copilot_news_fetch_blog` | GitHub Blog (RSS → HTML fallback) |
-| `copilot_news_fetch_reddit` | Reddit JSON API |
-| `copilot_news_fetch_docs` | GitHub Docs |
+| `copilot_news_fetch_reddit` | Reddit JSON API (`r/GithubCopilot`) |
 | `copilot_news_save_report` | Write timestamped Markdown to `reports/` |
 
 ---
@@ -141,18 +122,26 @@ Edit `data/state.json` directly, or let the agent update it via the feedback loo
 Reports are saved to `reports/YYYY-MM-DD.md`. Example structure:
 
 ```markdown
-# Copilot CLI News — 2026-04-03
+# Copilot CLI News — 2026-04-10
+> Sources: GitHub Releases · GitHub Blog · Reddit
+> Lookback: 14 days
 
 ## 🆕 New Features
-### Built-in skills (source: releases v1.0.17)
-Skills are now included with the CLI…
-**Try it out:** `/skills` to browse available skills.
+### Built-in skills (source: releases v1.0.18)
+Skills are now bundled with the CLI — no separate install needed.
+**Try it out:** type `/skills` to browse available skills.
+📖 [Docs](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli)
 
-## 🐛 Bug Fixes
-…
+## ✍️ Blog Posts
+### What's new in GitHub Copilot — April 2026
+Summary of the month's features…
+**Read:** https://github.blog/…
+📖 [Docs](https://docs.github.com/en/copilot/about-github-copilot/whats-new-in-github-copilot)
 
 ## 💬 Community Highlights
-…
+### "How I use Copilot CLI for daily standups" (score: 142)
+Community workflow tips…
+**Discussion:** https://www.reddit.com/r/GithubCopilot/…
 ```
 
 ---
