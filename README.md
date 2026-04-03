@@ -20,7 +20,7 @@ When you invoke the **Copilot News** agent, it:
 3. **Links** each feature to the relevant GitHub Copilot docs page (via a web search).
 4. **Suggests** a concrete "Try it out" action for every feature.
 5. **Saves** a timestamped Markdown report to `reports/`.
-6. **Persists** seen topics and preferences in `data/state.md` for the next run.
+6. **Persists** seen topics and preferences in `data/state.json` for the next run.
 
 ### How to invoke
 
@@ -53,7 +53,7 @@ copilot --agent=copilot-news --prompt "fetch recent Copilot news"
   agents/
     copilot-news.agent.md   <- Agent profile (auto-discovered by CLI)
 data/
-  state.md                  <- Persisted: known topics, excluded keywords, preferences
+  state.json                <- Persisted: known topics, excluded keywords, preferences
 reports/
   YYYY-MM-DD.md             <- Timestamped news reports (auto-generated)
 README.md
@@ -63,26 +63,27 @@ README.md
 
 ## ⚙️ Configuration
 
-State is stored in `data/state.md` as plain Markdown. Edit it directly or ask the agent to update it.
+Edit `data/state.json` directly, or ask the agent to update it during a conversation.
 
-Example state file:
-
-```markdown
-# Copilot News State
-
-Last checked: 2026-04-10
-
-## Already reported
-- release v1.0.17 — new features
-- blog: Copilot in VS Code April update
-
-## Excluded keywords
-- streamer-mode
-- enterprise-billing
-
-## Preferences
-- Lookback: 14 days
+```json
+{
+  "lastCheck": null,
+  "knownTopics": [],
+  "excludedKeywords": ["streamer-mode", "enterprise-billing"],
+  "preferences": {
+    "lookbackDays": 14,
+    "focusAreas": ["extensions", "mcp"]
+  }
+}
 ```
+
+| Field | Description |
+|-------|-------------|
+| `lastCheck` | ISO timestamp of the last successful check |
+| `knownTopics` | Topics already seen -- filtered out on next run |
+| `excludedKeywords` | Keywords permanently hidden |
+| `preferences.lookbackDays` | How far back to look (default: 14) |
+| `preferences.focusAreas` | Priority topics for the next check |
 
 To update exclusions mid-conversation just tell the agent:
 
@@ -98,10 +99,10 @@ The agent uses only **built-in Copilot CLI tools** -- no custom JavaScript:
 
 | Built-in tool | Used for |
 |---------------|---------|
-| `shell` / `bash` | Fetching GitHub, Blog, Reddit APIs |
+| `shell` / `bash` | `curl` calls to GitHub, Blog, Reddit APIs |
 | `web_search` | Finding the relevant docs page for each feature |
-| `view` | Reading `data/state.md` |
-| `edit` | Updating `data/state.md` |
+| `view` | Reading `data/state.json` |
+| `edit` | Updating `data/state.json` |
 | `create` | Writing timestamped reports to `reports/` |
 
 ---
