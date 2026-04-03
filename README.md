@@ -17,7 +17,7 @@ When you invoke the **Copilot News** agent, it:
    - GitHub Blog (`github.blog/ai-and-ml/github-copilot/`) via RSS feed
    - Reddit (`r/GithubCopilot`)
 2. **Filters** out topics you have already seen and keywords you have excluded.
-3. **Links** each feature to the relevant GitHub Copilot docs page (via the `copilot-news` skill).
+3. **Links** each feature to the relevant GitHub Copilot docs page (via a web search).
 4. **Suggests** a concrete "Try it out" action for every feature.
 5. **Saves** a timestamped Markdown report to `reports/`.
 6. **Persists** seen topics and preferences in `data/state.json` for the next run.
@@ -52,20 +52,12 @@ copilot --agent=copilot-news --prompt "fetch recent Copilot news"
 .github/
   agents/
     copilot-news.agent.md   <- Agent profile (auto-discovered by CLI)
-  skills/
-    copilot-news/
-      SKILL.md              <- Skill: docs URL map (auto-discovered by CLI)
 data/
   state.json                <- Persisted: known topics, excluded keywords, preferences
 reports/
   YYYY-MM-DD.md             <- Timestamped news reports (auto-generated)
-SPECIFICATION.md            <- Full technical spec
 README.md
 ```
-
-> **No extension or JavaScript needed.** The agent profile and skill files are
-> plain Markdown — the CLI discovers them automatically from `.github/agents/` and
-> `.github/skills/`.
 
 ---
 
@@ -108,6 +100,7 @@ The agent uses only **built-in Copilot CLI tools** -- no custom JavaScript:
 | Built-in tool | Used for |
 |---------------|---------|
 | `shell` / `bash` | `curl` calls to GitHub, Blog, Reddit APIs |
+| `web_search` | Finding the relevant docs page for each feature |
 | `view` | Reading `data/state.json` |
 | `edit` | Updating `data/state.json` |
 | `create` | Writing timestamped reports to `reports/` |
@@ -135,8 +128,3 @@ Community workflow tips...
 **Discussion:** https://www.reddit.com/r/GithubCopilot/...
 ```
 
----
-
-## 📋 Specification
-
-See [`SPECIFICATION.md`](./SPECIFICATION.md) for the full technical specification.

@@ -55,9 +55,17 @@ curl -s -H "User-Agent: copilot-news-agent/1.0" "https://www.reddit.com/r/Github
    - Contain: "no longer", "now correctly"
    - Describe performance: "faster", "performance improvement", "optimize"
 
-### Step 4 — Add Docs Links
+### Step 4 — Find Docs Links
 
-Use the `/copilot-news` skill for the docs URL reference table. For every feature, pick the most relevant URL and append: `📖 [Docs](url)`
+For each new feature or blog post, search the web for the most relevant GitHub Copilot docs page using the `web_search` tool. Use a search query like:
+
+```
+site:docs.github.com/en/copilot "<feature keyword>"
+```
+
+Pick the best matching result URL and append it to the item: `📖 [Docs](url)`
+
+If no specific docs page exists for a feature, link to: `https://docs.github.com/en/copilot/about-github-copilot/whats-new-in-github-copilot`
 
 ### Step 5 — Save Report
 
