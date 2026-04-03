@@ -95,7 +95,6 @@ Exclude anything related to "streamer-mode" from now on
 
 ## 🛠️ How the agent works
 
-The agent uses only built-in Copilot CLI capabilities — no custom JavaScript.
 It fetches data from the three API endpoints, filters and enriches it, writes a
 report to `reports/`, and updates `data/state.md` so it knows what it has already seen.
 

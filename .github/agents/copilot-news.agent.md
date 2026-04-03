@@ -23,14 +23,15 @@ Grab the latest items from all three sources:
 
 **GitHub Blog RSS** — `https://github.blog/ai-and-ml/github-copilot/feed/`
 
-**Reddit** — `https://www.reddit.com/r/GithubCopilot/new.json?limit=15`
+**Reddit** — `https://www.reddit.com/r/GithubCopilot/top/?t=week`
 
 ### Step 3 — Filter
 
 1. Only keep items within the lookback window.
 2. Skip anything already listed in the "Known Topics" section of state.
 3. Skip items matching any excluded keyword (case-insensitive).
-4. **For releases, keep only new features.** Drop lines about bug fixes (Fix, Resolve, Correct, Patch, Revert), regressions ("no longer", "now correctly"), and performance improvements ("faster", "performance improvement", "optimize").
+4. Keep at most 4 Reddit posts, prioritizing those with higher scores.
+5. **For releases, keep only new features.** Drop lines about bug fixes (Fix, Resolve, Correct, Patch, Revert), regressions ("no longer", "now correctly"), and performance improvements ("faster", "performance improvement", "optimize").
 
 ### Step 4 — Find Docs Links
 
@@ -40,7 +41,7 @@ For each new feature or blog post, look up the most relevant GitHub Copilot docs
 site:docs.github.com/en/copilot "<feature keyword>"
 ```
 
-Attach a `📖 [Docs](url)` link to each item. If nothing specific exists, fall back to: `https://docs.github.com/en/copilot/about-github-copilot/whats-new-in-github-copilot`
+Attach a `📖 [Docs](url)` link to each item, if you find relevant pages.
 
 ### Step 5 — Save Report
 
