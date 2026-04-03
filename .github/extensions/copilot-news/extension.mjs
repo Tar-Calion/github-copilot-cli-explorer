@@ -53,81 +53,87 @@ const TRIGGER_PATTERNS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Workflow instructions injected when trigger is detected
+// Feedback state — persists across turns within a session
+// ---------------------------------------------------------------------------
+let awaitingFeedback = false;
+
+// ---------------------------------------------------------------------------
+// Instructions injected for the initial news fetch turn
 // ---------------------------------------------------------------------------
 const WORKFLOW_INSTRUCTIONS = `
-You have been triggered as the **Copilot News Agent**. Follow this workflow precisely:
+You have been triggered as the **Copilot News Agent**. Follow every step below in order.
 
 ## Step 1 — Load State
-Call \`copilot_news_load_state\` to retrieve the user's known topics, excluded keywords, and preferences.
+Call \`copilot_news_load_state\`.
 
-## Step 2 — Fetch Sources (in parallel)
-Call ALL of these tools simultaneously:
+## Step 2 — Fetch Sources (call all four IN PARALLEL in a single response)
 - \`copilot_news_fetch_releases\`
 - \`copilot_news_fetch_blog\`
 - \`copilot_news_fetch_reddit\`
 - \`copilot_news_fetch_docs\`
 
 ## Step 3 — Analyze & Filter
-- Compare fetched items against \`knownTopics\` (by ID) — skip items the user already knows.
-- Filter out items matching any \`excludedKeywords\`.
-- Group remaining items by category: **New Features**, **Bug Fixes**, **Documentation**, **Community Highlights**.
-- Rank by importance/impact.
+- Skip items whose ID appears in \`knownTopics\`.
+- Skip items where title/body contains any string in \`excludedKeywords\` (case-insensitive).
+- Group: **New Features** · **Bug Fixes** · **Documentation** · **Community Highlights**.
 
 ## Step 4 — Generate Try-It-Out Suggestions
-For each new feature or notable item, include a concrete **"Try it out"** suggestion:
-- Exact CLI commands to run
-- Example prompts to type
-- Settings to change
-- Links to relevant docs
-Make these actionable — the user should be able to copy-paste and try immediately.
+For every new item add a **"Try it out:"** line with an exact CLI command or prompt the user can copy-paste.
 
 ## Step 5 — Save Report
-Call \`copilot_news_save_report\` with the full markdown report. Use this format:
+Call \`copilot_news_save_report\` with the full markdown. Format:
 
 \`\`\`
 # Copilot CLI News — [DATE]
-
 ## 🆕 New Features
-### [Feature Name] (source: [source])
+### [Name] (source: [source])
 [Summary]
-**Try it out:** [concrete command/steps]
-
+**Try it out:** [exact steps]
 ## 🐛 Bug Fixes
-### [Fix Description] (source: [source])
+### [Name] (source: [source])
 [Summary]
-
 ## 📖 Documentation Updates
-### [Doc Change] (source: [source])
+### [Name] (source: docs)
 [Summary]
-
 ## 💬 Community Highlights
-### [Post Title] (source: reddit, score: [N])
+### [Title] (reddit, score: [N])
 [Summary]
-**Try it out:** [if applicable]
-
 ## ℹ️ Excluded by Preference
-[List of excluded keywords]
+[keywords or "none"]
 \`\`\`
 
-## Step 6 — Present Summary
-Show a concise terminal-friendly summary of the key findings. Keep it scannable.
+## Step 6 — Save State (REQUIRED before feedback)
+Call \`copilot_news_save_state\` now — with \`lastCheck\` = current ISO timestamp and ALL topic IDs
+from this report added to \`knownTopics\`. This ensures progress is never lost.
 
-## Step 7 — Collect Feedback
-Use the \`ask_user\` tool to ask the user:
-- Which topics they want to **mark as known** (so they won't appear next time)
-- Which topics they want to **exclude permanently** (keywords to add to exclusion list)
-- Any topics they want to learn **more** about
-- Any **focus areas** to prioritize next time
+## Step 7 — Open Feedback Loop (REQUIRED)
+Call \`copilot_news_request_feedback\` — this arms the system to capture the user's next reply
+as feedback. Then, in your text response, present a short summary and end with these exact questions:
 
-## Step 8 — Save State
-Based on user feedback, call \`copilot_news_save_state\` with the updated state:
-- Add newly seen topic IDs to \`knownTopics\`
-- Add any new excluded keywords
-- Update \`lastCheck\` to now
-- Update \`focusAreas\` if the user specified any
+> **Feedback (reply to any or all):**
+> 1. Topics to **exclude forever** — keywords I should never show again?
+> 2. **Focus areas** to prioritize next time (e.g. "extensions", "mcp", "models")?
+> 3. Anything you want to explore deeper right now?
 
-IMPORTANT: Complete ALL steps. Do not skip the feedback loop or state saving.
+Do NOT call \`copilot_news_save_state\` again — it was already saved in Step 6.
+IMPORTANT: You MUST call \`copilot_news_request_feedback\` before ending your response.
+`;
+
+// ---------------------------------------------------------------------------
+// Instructions injected when the user replies with feedback
+// ---------------------------------------------------------------------------
+const FEEDBACK_INSTRUCTIONS = `
+The user has just responded with feedback on the Copilot News report.
+
+Parse their message and:
+1. Extract any **keywords to exclude** (things they never want to see again).
+2. Extract any **focus areas** they want prioritized next time.
+3. Note any topics they want to **explore deeper** — if so, provide that deeper analysis now.
+
+Then call \`copilot_news_update_preferences\` with the parsed values to persist them.
+Finally, confirm to the user what was saved.
+
+Do NOT trigger a new news fetch.
 `;
 
 // ---------------------------------------------------------------------------
@@ -135,10 +141,18 @@ IMPORTANT: Complete ALL steps. Do not skip the feedback loop or state saving.
 // ---------------------------------------------------------------------------
 const session = await joinSession({
     // ------------------------------------------------------------------
-    // Hook: detect trigger keywords and inject workflow
+    // Hook: detect trigger keywords OR capture pending feedback reply
     // ------------------------------------------------------------------
     hooks: {
         onUserPromptSubmitted: async (input) => {
+            // Feedback reply from a previous news check — capture it first
+            if (awaitingFeedback) {
+                awaitingFeedback = false;
+                await session.log("💬 Processing your feedback…");
+                return { additionalContext: FEEDBACK_INSTRUCTIONS };
+            }
+
+            // New news-check trigger
             const triggered = TRIGGER_PATTERNS.some((p) => p.test(input.prompt));
             if (triggered) {
                 await session.log("📰 Copilot News Agent activated — fetching latest updates…");
@@ -219,6 +233,62 @@ const session = await joinSession({
                 };
                 saveState(updated);
                 return `State saved. ${updated.knownTopics.length} known topics, ${updated.excludedKeywords.length} excluded keywords.`;
+            },
+        },
+
+        // ==============================================================
+        // Feedback loop tools
+        // ==============================================================
+        {
+            name: "copilot_news_request_feedback",
+            description:
+                "Call this after presenting the news summary. Arms the system to capture the user's next reply as feedback (excluded keywords, focus areas). MUST be called before ending the response.",
+            parameters: { type: "object", properties: {} },
+            handler: async () => {
+                awaitingFeedback = true;
+                return "Feedback mode armed. The user's next reply will be processed as feedback. Now ask them your feedback questions in your text response.";
+            },
+        },
+        {
+            name: "copilot_news_update_preferences",
+            description:
+                "Persist user feedback: add excluded keywords and/or update focus areas. Called after the user replies with their preferences.",
+            parameters: {
+                type: "object",
+                properties: {
+                    excludedKeywords: {
+                        type: "array",
+                        description: "New keywords to add to the permanent exclusion list",
+                        items: { type: "string" },
+                    },
+                    focusAreas: {
+                        type: "array",
+                        description: "Topics to prioritize on the next news check",
+                        items: { type: "string" },
+                    },
+                },
+            },
+            handler: async (args) => {
+                const state = loadState();
+                const addedKeywords = args.excludedKeywords || [];
+                const newExcluded = [
+                    ...new Set([...state.excludedKeywords, ...addedKeywords]),
+                ];
+                const updated = {
+                    ...state,
+                    excludedKeywords: newExcluded,
+                    preferences: {
+                        ...state.preferences,
+                        focusAreas: args.focusAreas || state.preferences?.focusAreas || [],
+                    },
+                };
+                saveState(updated);
+                const parts = [];
+                if (addedKeywords.length) parts.push(`excluded keywords added: ${addedKeywords.join(", ")}`);
+                if (args.focusAreas?.length) parts.push(`focus areas: ${args.focusAreas.join(", ")}`);
+                return parts.length
+                    ? `Preferences saved — ${parts.join(" | ")}.`
+                    : "No preference changes — state unchanged.";
             },
         },
 

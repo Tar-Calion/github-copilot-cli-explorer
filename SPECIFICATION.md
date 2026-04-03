@@ -86,9 +86,13 @@ User types: "copilot news"
 │          excludedKeywords (case-insensitive substring match)          │
 │  Step 4: For each new item → generate "Try it out" suggestion        │
 │  Step 5: Call copilot_news_save_report with markdown report          │
-│  Step 6: Present terminal summary (concise, scannable)               │
-│  Step 7: Call ask_user — collect feedback on topics                   │
-│  Step 8: Call copilot_news_save_state — persist updated state        │
+│  Step 6: Call copilot_news_save_state (lastCheck + all topic IDs)    │
+│  Step 7: Call copilot_news_request_feedback → ask in text response   │
+│                                                                       │
+│  [User replies with feedback → new turn]                              │
+│                                                                       │
+│  Step 8: Hook injects FEEDBACK_INSTRUCTIONS                          │
+│  Step 9: Call copilot_news_update_preferences (keywords + focus)     │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -102,12 +106,14 @@ import { join } from "node:path";
 
 `@github/copilot-sdk` is auto-resolved by the CLI — do NOT `npm install` it.
 
-### 3.3 Constants
+### 3.3 Constants and State
 
 ```js
 const CWD        = process.cwd();                    // Repo root
 const STATE_PATH = join(CWD, "data", "state.json");  // State file
 const REPORTS_DIR = join(CWD, "reports");             // Report directory
+
+let awaitingFeedback = false;  // Two-turn feedback flag (in-memory)
 ```
 
 ---
@@ -351,7 +357,50 @@ handler: async () => {
 
 ---
 
-### 6.3 `copilot_news_fetch_releases`
+### 6.3 `copilot_news_request_feedback`
+
+**Purpose**: Arm the two-turn feedback loop. Must be called after `copilot_news_save_state`
+and before ending the news-check response.
+
+| Property | Value |
+|----------|-------|
+| Name | `copilot_news_request_feedback` |
+| Description | "Call this after presenting the news summary. Arms the system to capture the user's next reply as feedback. MUST be called before ending the response." |
+| Parameters | `{ type: "object", properties: {} }` (no arguments) |
+| Side effect | Sets in-memory `awaitingFeedback = true` |
+| Returns | Confirmation string |
+
+---
+
+### 6.4 `copilot_news_update_preferences`
+
+**Purpose**: Persist the user's feedback (excluded keywords, focus areas) after their reply.
+
+| Property | Value |
+|----------|-------|
+| Name | `copilot_news_update_preferences` |
+| Description | "Persist user feedback: add excluded keywords and/or update focus areas." |
+
+**Parameters**:
+```json
+{
+    "type": "object",
+    "properties": {
+        "excludedKeywords": { "type": "array", "items": { "type": "string" } },
+        "focusAreas":       { "type": "array", "items": { "type": "string" } }
+    }
+}
+```
+
+**Handler behavior**:
+1. Load current state.
+2. Merge new `excludedKeywords` with existing (deduplicate via `Set`).
+3. Replace `preferences.focusAreas` with provided value (or keep current if not provided).
+4. Save. Return confirmation: `"Preferences saved — excluded: X | focus: Y"`.
+
+---
+
+### 6.5 `copilot_news_fetch_releases`
 
 **Purpose**: Fetch recent Copilot CLI releases from the GitHub API.
 
@@ -421,7 +470,7 @@ for unauthenticated requests (sufficient for periodic use).
 
 ---
 
-### 6.4 `copilot_news_fetch_blog`
+### 6.6 `copilot_news_fetch_blog`
 
 **Purpose**: Fetch recent GitHub Copilot blog posts.
 
@@ -521,7 +570,7 @@ const id = `blog-${slug}`;
 
 ---
 
-### 6.5 `copilot_news_fetch_reddit`
+### 6.7 `copilot_news_fetch_reddit`
 
 **Purpose**: Fetch recent posts from r/GithubCopilot.
 
@@ -609,7 +658,7 @@ Reddit REQUIRES a non-empty `User-Agent`. Without it, the request is blocked (42
 
 ---
 
-### 6.6 `copilot_news_fetch_docs`
+### 6.8 `copilot_news_fetch_docs`
 
 **Purpose**: Fetch the GitHub Copilot documentation to detect new/updated content.
 
@@ -665,7 +714,7 @@ the other sources but provides useful context the LLM can analyze.
 
 ---
 
-### 6.7 `copilot_news_save_report`
+### 6.9 `copilot_news_save_report`
 
 **Purpose**: Save a markdown news report to the `reports/` directory.
 
@@ -915,51 +964,78 @@ explicitly via the `save_state` tool, not on shutdown).
 
 ---
 
-## 11. User Feedback Loop (Step 7)
+## 11. User Feedback Loop
 
-The LLM uses the built-in `ask_user` tool with a structured schema. Example:
+### 11.1 Design
 
+The feedback loop uses a **two-turn pattern** rather than the `ask_user` built-in
+tool, which the LLM tends to skip after completing a multi-step workflow.
+
+**Turn 1 (news check turn)**:
+1. Agent completes Steps 1–6 (fetch, analyze, save report, save state).
+2. Agent calls `copilot_news_request_feedback` → sets `awaitingFeedback = true`.
+3. Agent asks feedback questions in its **text response** and ends the turn.
+
+**Turn 2 (user feedback reply)**:
+1. `onUserPromptSubmitted` detects `awaitingFeedback === true`.
+2. Sets `awaitingFeedback = false` immediately (prevents double-trigger).
+3. Injects `FEEDBACK_INSTRUCTIONS` as `additionalContext`.
+4. Agent parses the user's reply, calls `copilot_news_update_preferences`.
+
+### 11.2 State Saving Order
+
+State is saved in **two separate calls**:
+
+| Call | When | What |
+|------|------|------|
+| `copilot_news_save_state` | Step 6 of news turn | `lastCheck` + all report topic IDs → `knownTopics` |
+| `copilot_news_update_preferences` | Feedback turn | New `excludedKeywords` + `focusAreas` |
+
+Splitting the saves ensures progress is never lost — even if the user doesn't reply.
+
+### 11.3 Feedback Questions (in agent's text)
+
+```
+> **Feedback (reply to any or all):**
+> 1. Topics to **exclude forever** — keywords I should never show again?
+> 2. **Focus areas** to prioritize next time (e.g. "extensions", "mcp", "models")?
+> 3. Anything you want to explore deeper right now?
+```
+
+### 11.4 Tool: `copilot_news_request_feedback`
+
+| Property | Value |
+|----------|-------|
+| Parameters | None |
+| Side effect | Sets in-memory `awaitingFeedback = true` |
+| Returns | Confirmation string for the LLM |
+
+### 11.5 Tool: `copilot_news_update_preferences`
+
+**Parameters**:
 ```json
 {
-    "message": "Which topics do you want to manage?",
-    "requestedSchema": {
-        "properties": {
-            "mark_as_known": {
-                "type": "array",
-                "title": "Mark as known (won't show next time)",
-                "items": {
-                    "type": "string",
-                    "enum": ["release-v1.0.17", "release-v1.0.16", "blog-fleet-in-copilot-cli"]
-                }
-            },
-            "exclude_keywords": {
-                "type": "string",
-                "title": "Add excluded keywords (comma-separated)",
-                "description": "Topics containing these keywords will be permanently filtered"
-            },
-            "want_more": {
-                "type": "string",
-                "title": "Want to learn more about (comma-separated)",
-                "description": "I'll provide a deeper analysis of these topics"
-            },
-            "focus_areas": {
-                "type": "string",
-                "title": "Focus areas for next time (comma-separated)",
-                "description": "Priority topics for the next news check"
-            }
+    "type": "object",
+    "properties": {
+        "excludedKeywords": {
+            "type": "array",
+            "description": "New keywords to add to the permanent exclusion list",
+            "items": { "type": "string" }
+        },
+        "focusAreas": {
+            "type": "array",
+            "description": "Topics to prioritize on the next news check",
+            "items": { "type": "string" }
         }
     }
 }
 ```
 
-The LLM should dynamically populate the `enum` array in `mark_as_known` with
-the actual topic IDs from the current report.
-
-If the user **declines** the form → the LLM should still save state with
-`lastCheck` updated and all report items added to `knownTopics`.
-
-If the user **cancels** → the LLM should save state with at minimum the
-`lastCheck` updated.
+**Behavior**:
+1. Load current state.
+2. Merge new `excludedKeywords` with existing (deduplicate via `Set`).
+3. Replace `preferences.focusAreas` with provided value.
+4. Save. Return confirmation.
 
 ---
 
@@ -995,19 +1071,22 @@ The LLM follows these guidelines when generating try-it-out suggestions:
 After implementation, verify:
 
 - [ ] Extension loads without errors (`extensions_manage list` shows it)
-- [ ] `extensions_manage inspect copilot-news` shows all 7 tools
-- [ ] Typing "copilot news" triggers the hook (log message appears)
+- [ ] `extensions_manage inspect copilot-news` shows all 9 tools
+- [ ] Typing "copilot news" triggers the hook (log message "📰 Copilot News Agent activated" appears)
 - [ ] `copilot_news_load_state` returns valid JSON
 - [ ] `copilot_news_fetch_releases` returns release data
-- [ ] `copilot_news_fetch_blog` returns blog post data
+- [ ] `copilot_news_fetch_blog` returns blog post data (via RSS)
 - [ ] `copilot_news_fetch_reddit` returns Reddit posts
 - [ ] `copilot_news_fetch_docs` returns doc content
 - [ ] `copilot_news_save_report` creates a file in `reports/`
 - [ ] `copilot_news_save_state` persists changes to `data/state.json`
-- [ ] Full workflow completes: trigger → fetch → report → feedback → save
+- [ ] `copilot_news_request_feedback` sets `awaitingFeedback = true`
+- [ ] After feedback is requested, replying to the agent triggers "💬 Processing your feedback…" log
+- [ ] `copilot_news_update_preferences` merges keywords and saves focus areas
+- [ ] Full two-turn workflow completes: trigger → fetch → save → feedback question → reply → update prefs
 - [ ] Same-day re-run creates `{date}-2.md` instead of overwriting
 - [ ] Non-trigger prompts don't activate the hook
-- [ ] State survives extension reload
+- [ ] State survives extension reload (`awaitingFeedback` resets, JSON state persists)
 
 ---
 
