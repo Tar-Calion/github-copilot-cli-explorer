@@ -11,65 +11,40 @@ Follow these steps every time the user asks for news or updates:
 
 ### Step 1 — Load State
 
-Read `data/state.json` with the `view` tool. Note `lastCheck`, `knownTopics`, `excludedKeywords`, and `preferences.lookbackDays` (default 14).
+Read `data/state.md` to learn what you already know: when you last checked, which topics have been seen, any excluded keywords, and how far back to look (default 14 days).
 
-If the file is missing or empty, use:
-```json
-{
-  "lastCheck": null,
-  "knownTopics": [],
-  "excludedKeywords": [],
-  "preferences": { "lookbackDays": 14, "focusAreas": [] }
-}
-```
+If the file is missing or empty, treat everything as defaults (no previous check, nothing seen, no exclusions, 14-day lookback, no focus areas).
 
-### Step 2 — Fetch Sources (run all three)
+### Step 2 — Fetch Sources
 
-Use the `shell` tool with the commands below. Adapt to the OS if needed (`curl.exe` on Windows, `curl` on Linux/macOS).
+Grab the latest items from all three sources:
 
-**GitHub Releases:**
-```
-curl -s -H "Accept: application/vnd.github+json" -H "User-Agent: copilot-news-agent" "https://api.github.com/repos/github/copilot-cli/releases?per_page=15"
-```
+**GitHub Releases** — `https://api.github.com/repos/github/copilot-cli/releases?per_page=15`
 
-**GitHub Blog RSS:**
-```
-curl -s -H "User-Agent: copilot-news-agent/1.0" "https://github.blog/ai-and-ml/github-copilot/feed/"
-```
+**GitHub Blog RSS** — `https://github.blog/ai-and-ml/github-copilot/feed/`
 
-**Reddit:**
-```
-curl -s -H "User-Agent: copilot-news-agent/1.0" "https://www.reddit.com/r/GithubCopilot/new.json?limit=15"
-```
+**Reddit** — `https://www.reddit.com/r/GithubCopilot/new.json?limit=15`
 
 ### Step 3 — Filter
 
-1. Cutoff date = today minus `lookbackDays` days.
-2. Skip any item whose ID is already in `knownTopics`:
-   - Releases: `release-{tag_name}` (e.g. `release-v1.0.17`)
-   - Blog: `blog-{url-slug}` (last path segment of the URL)
-   - Reddit: `reddit-{post_id}`
-3. Skip items whose title or body matches any word in `excludedKeywords` (case-insensitive).
-4. **Releases — new features only.** Skip bullet lines that:
-   - Start with: Fix, Resolve, Correct, Patch, Revert
-   - Contain: "no longer", "now correctly"
-   - Describe performance: "faster", "performance improvement", "optimize"
+1. Only keep items within the lookback window.
+2. Skip anything already listed in the "Known Topics" section of state.
+3. Skip items matching any excluded keyword (case-insensitive).
+4. **For releases, keep only new features.** Drop lines about bug fixes (Fix, Resolve, Correct, Patch, Revert), regressions ("no longer", "now correctly"), and performance improvements ("faster", "performance improvement", "optimize").
 
 ### Step 4 — Find Docs Links
 
-For each new feature or blog post, search the web for the most relevant GitHub Copilot docs page using the `web_search` tool. Use a search query like:
+For each new feature or blog post, look up the most relevant GitHub Copilot docs page. Search for something like:
 
 ```
 site:docs.github.com/en/copilot "<feature keyword>"
 ```
 
-Pick the best matching result URL and append it to the item: `📖 [Docs](url)`
-
-If no specific docs page exists for a feature, link to: `https://docs.github.com/en/copilot/about-github-copilot/whats-new-in-github-copilot`
+Attach a `📖 [Docs](url)` link to each item. If nothing specific exists, fall back to: `https://docs.github.com/en/copilot/about-github-copilot/whats-new-in-github-copilot`
 
 ### Step 5 — Save Report
 
-Use the `create` tool to save a Markdown report to `reports/YYYY-MM-DD.md` (today's date). If that file already exists, save to `reports/YYYY-MM-DD-2.md`, `-3.md`, etc.
+Write a Markdown report to `reports/YYYY-MM-DD.md` (today's date). If that file already exists, use `-2.md`, `-3.md`, etc.
 
 **Report format:**
 
@@ -104,10 +79,10 @@ Releases checked: N | Blog posts: N | Reddit posts: N | New items: N | Skipped (
 
 ### Step 6 — Update State
 
-Edit `data/state.json` using the `edit` tool:
-- Set `lastCheck` to the current ISO 8601 timestamp.
-- **Append** all topic IDs from this report to `knownTopics` (merge — do not replace existing entries).
-- Preserve `excludedKeywords` and `preferences` unless the user asked to change them.
+Update `data/state.md`:
+- Record when this check happened.
+- Add the topic IDs from this report to "Known Topics" (don't remove old ones).
+- Keep excluded keywords and preferences as-is unless the user asked to change them.
 
 ### Step 7 — Summary
 
@@ -120,5 +95,5 @@ Show a brief, scannable terminal summary (bullet list, most impactful items firs
 - **Never invent features.** Only report what was found in the fetched data.
 - Always complete all 7 steps, even if a source returns no results or errors.
 - If a fetch fails, note it in the report and continue with the other sources.
-- If the user asks to exclude certain topics, add the keyword to `excludedKeywords` in `data/state.json`.
-- If the user asks to change the lookback period, update `preferences.lookbackDays` in `data/state.json`.
+- If the user asks to exclude certain topics, add the keyword to the excluded list in `data/state.md`.
+- If the user asks to change the lookback period, update it in `data/state.md`.
