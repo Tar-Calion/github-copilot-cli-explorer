@@ -20,7 +20,7 @@ When you invoke the **Copilot News** agent, it:
 3. **Links** each feature to the relevant GitHub Copilot docs page.
 4. **Suggests** a concrete "Try it out" action for every feature.
 5. **Saves** a timestamped Markdown report to `reports/`.
-6. **Persists** seen topics and preferences in `data/state.md` for the next run.
+6. **Persists** seen topics and preferences in local `data/state.md` for the next run, using `data/state.md.template` as the committed starting point.
 
 ### How to invoke
 
@@ -53,7 +53,8 @@ copilot --agent=copilot-news --prompt "fetch recent Copilot news"
   agents/
     copilot-news.agent.md   <- Agent profile (auto-discovered by CLI)
 data/
-  state.md                  <- Persisted: known topics, excluded keywords, preferences
+  state.md.template         <- Committed starter file for local state
+  state.md                  <- Local runtime state (gitignored)
 reports/
   YYYY-MM-DD.md             <- Timestamped news reports (auto-generated)
 README.md
@@ -63,8 +64,8 @@ README.md
 
 ## ⚙️ Configuration
 
-Edit `data/state.md` directly, or ask the agent to update it during a conversation.
-The file is free-form Markdown — just keep the headings so the agent can find things:
+Copy `data/state.md.template` to `data/state.md` if you want to seed it manually, or ask the agent to create and update `data/state.md` during a conversation.
+`data/state.md` is gitignored. The file is free-form Markdown — just keep the headings so the agent can find things:
 
 ```markdown
 # Agent State
@@ -96,7 +97,7 @@ Exclude anything related to "streamer-mode" from now on
 ## 🛠️ How the agent works
 
 It fetches data from the three API endpoints, filters and enriches it, writes a
-report to `reports/`, and updates `data/state.md` so it knows what it has already seen.
+report to `reports/`, and updates local `data/state.md` so it knows what it has already seen.
 
 ---
 

@@ -13,7 +13,7 @@ Follow these steps every time the user asks for news or updates:
 
 Read `data/state.md` to learn what you already know: when you last checked, which topics have been seen, any excluded keywords, and how far back to look (default 14 days).
 
-If the file is missing or empty, treat everything as defaults (no previous check, nothing seen, no exclusions, 14-day lookback, no focus areas).
+If `data/state.md` is missing or empty, fall back to `data/state.md.template`. If neither file gives you usable state, treat everything as defaults (no previous check, nothing seen, no exclusions, 14-day lookback, no focus areas).
 
 ### Step 2 — Fetch Sources
 
@@ -84,6 +84,7 @@ Update `data/state.md`:
 - Record when this check happened.
 - Add the topic IDs from this report to "Known Topics" (don't remove old ones).
 - Keep excluded keywords and preferences as-is unless the user asked to change them.
+- If `data/state.md` does not exist yet, create it by starting from `data/state.md.template` or from the same headings and rough shape.
 
 ### Step 7 — Summary
 
